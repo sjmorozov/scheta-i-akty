@@ -98,10 +98,8 @@ namespace InvoiceAndAct
 
         private static decimal Parse(string text, int precision, string message)
         {
-            string value = Regex.Replace(text ?? "", @"\s+", "").Replace(',', '.');
             decimal result;
-            if (!decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out result) ||
-                result >= Money.Limit || result != decimal.Round(result, precision))
+            if (!Money.TryParse(text, precision, out result))
                 throw new ArgumentException(message);
             return result;
         }
@@ -158,6 +156,13 @@ namespace InvoiceAndAct
             { "", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто" };
         private static readonly string[] Hundreds =
             { "", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот" };
+
+        public static bool TryParse(string text, int precision, out decimal value)
+        {
+            string cleaned = Regex.Replace(text ?? "", @"\s+", "").Replace(',', '.');
+            return decimal.TryParse(cleaned, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out value) &&
+                value < Limit && value == decimal.Round(value, precision);
+        }
 
         public static decimal Round(decimal value)
         {

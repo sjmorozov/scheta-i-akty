@@ -53,6 +53,13 @@ namespace InvoiceAndAct
                 Dock = DockStyle.Top,
                 Margin = new Padding(0, 0, 12, 8)
             };
+            var combo = input as ComboBox;
+            if (combo != null)
+            {
+                combo.Font = BaseFont;
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, combo.PreferredHeight));
+            }
             var caption = Label(label);
             caption.Margin = new Padding(0, 0, 0, 3);
             layout.Controls.Add(caption, 0, 0);

@@ -15,6 +15,7 @@ namespace InvoiceAndAct
     {
         [DataMember] public int FirstNumber { get; set; }
         [DataMember] public Supplier Supplier { get; set; }
+        [DataMember] public Party[] Buyers { get; set; }
 
         public static AppDefaults Load()
         {
@@ -36,6 +37,37 @@ namespace InvoiceAndAct
                 return Read<T>(stream);
         }
 
+        public static void WriteAtomic<T>(string path, T value)
+        {
+            string directory = Path.GetDirectoryName(path);
+            Directory.CreateDirectory(directory);
+            string temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                Write(temporary, value);
+                if (File.Exists(path))
+                {
+                    File.Replace(temporary, path, null);
+                    return;
+                }
+                try
+                {
+                    File.Move(temporary, path);
+                }
+                catch (IOException)
+                {
+                    if (!File.Exists(path))
+                        throw;
+                    File.Replace(temporary, path, null);
+                }
+            }
+            finally
+            {
+                if (File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+        }
+
         public static void Write<T>(string path, T value)
         {
             using (var stream = new FileStream(path, FileMode.CreateNew))
@@ -48,13 +80,11 @@ namespace InvoiceAndAct
 
     internal sealed class SupplierSettings
     {
-        private readonly string root;
         private readonly string path;
 
         public SupplierSettings(string directory)
         {
-            root = directory;
-            path = Path.Combine(root, "supplier.json");
+            path = Path.Combine(directory, "supplier.json");
         }
 
         public Supplier Load(Supplier fallback)
@@ -65,21 +95,7 @@ namespace InvoiceAndAct
 
         public void Save(Supplier supplier)
         {
-            Directory.CreateDirectory(root);
-            string temporary = Path.Combine(root, Guid.NewGuid().ToString("N") + ".tmp");
-            try
-            {
-                Json.Write(temporary, supplier);
-                if (File.Exists(path))
-                    File.Replace(temporary, path, null);
-                else
-                    File.Move(temporary, path);
-            }
-            finally
-            {
-                if (File.Exists(temporary))
-                    File.Delete(temporary);
-            }
+            Json.WriteAtomic(path, supplier);
         }
     }
 
@@ -100,11 +116,13 @@ namespace InvoiceAndAct
         private const string RecordFile = "Запись.json";
         private readonly string root;
         private readonly int firstNumber;
+        private readonly Party[] initialBuyers;
 
-        public HistoryStore(string directory, int firstNumber)
+        public HistoryStore(string directory, int firstNumber, Party[] initialBuyers = null)
         {
             root = Path.GetFullPath(directory);
             this.firstNumber = firstNumber > 0 && firstNumber <= Invoice.MaxNumber ? firstNumber : 1;
+            this.initialBuyers = initialBuyers ?? new Party[0];
         }
 
         public IList<HistoryEntry> Read()
@@ -153,12 +171,14 @@ namespace InvoiceAndAct
             return last < Invoice.MaxNumber ? (last + 1).ToString(CultureInfo.InvariantCulture) : "";
         }
 
-        public static IList<Party> Buyers(IList<HistoryEntry> entries)
+        public IList<Party> Buyers(IList<HistoryEntry> entries)
         {
-            return entries.Where(entry => entry.Buyer != null && !string.IsNullOrWhiteSpace(entry.Buyer.Name))
-                .OrderByDescending(entry => entry.SavedUtc)
-                .GroupBy(entry => BuyerKey(entry.Buyer), StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First().Buyer)
+            return entries.OrderByDescending(entry => entry.SavedUtc)
+                .Select(entry => entry.Buyer)
+                .Concat(initialBuyers)
+                .Where(buyer => buyer != null && !string.IsNullOrWhiteSpace(buyer.Name))
+                .GroupBy(BuyerKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
                 .OrderBy(buyer => buyer.Name, StringComparer.Create(Money.Russian, true))
                 .ToList();
         }

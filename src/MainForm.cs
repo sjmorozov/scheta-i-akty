@@ -11,6 +11,12 @@ namespace InvoiceAndAct
 {
     internal sealed class MainForm : Form
     {
+        private const int ItemName = 0;
+        private const int ItemUnit = 1;
+        private const int ItemQuantity = 2;
+        private const int ItemPrice = 3;
+        private const int ItemAmount = 4;
+        private readonly WorkCatalog workCatalog;
         private readonly HistoryStore history;
         private readonly SupplierSettings settings;
         private Supplier supplier;
@@ -26,6 +32,7 @@ namespace InvoiceAndAct
         private readonly ComboBox vatMode = Combo();
         private readonly TextBox vatPercent = Ui.TextBox(6);
         private readonly ComboBox savedBuyers = Combo();
+        private readonly ComboBox savedWorks = Combo();
         private readonly TextBox buyerName = Ui.TextBox(200);
         private readonly TextBox buyerInn = Ui.TextBox(12);
         private readonly TextBox buyerKpp = Ui.TextBox(9);
@@ -39,16 +46,19 @@ namespace InvoiceAndAct
         private readonly Button openAct = Ui.Button("Открыть акт");
         private readonly Button openFolder = Ui.Button("Открыть папку");
         private IList<Party> buyers = new List<Party>();
+        private IList<WorkTemplate> works = new List<WorkTemplate>();
         private string suggestedNumber = "";
         private DateTime previousInvoiceDate = DateTime.Today;
         private bool updatingBuyers;
+        private bool updatingWorks;
         private int lastSavedNumber;
 
-        public MainForm(HistoryStore history, SupplierSettings settings, Supplier supplier)
+        public MainForm(HistoryStore history, SupplierSettings settings, Supplier supplier, WorkCatalog workCatalog)
         {
             this.history = history;
             this.settings = settings;
             this.supplier = supplier;
+            this.workCatalog = workCatalog;
             Text = "Счета и акты";
             Font = Ui.BaseFont;
             BackColor = Ui.Background;
@@ -78,6 +88,7 @@ namespace InvoiceAndAct
             UpdateSupplierCaption();
             ResetForm();
             RefreshHistorySafely(true);
+            RefreshWorkList();
         }
 
         private Control BuildHeader()
@@ -189,23 +200,46 @@ namespace InvoiceAndAct
         private Control BuildItems()
         {
             var group = new TableLayoutPanel {
-                ColumnCount = 1, RowCount = 2, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 12, 7)
+                ColumnCount = 1, RowCount = 3, Dock = DockStyle.Fill, Margin = new Padding(0, 3, 12, 6)
             };
+            group.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             group.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             group.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var toolbar = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Dock = DockStyle.Top };
-            toolbar.Margin = new Padding(0, 0, 0, 6);
+            group.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            Control workField = Ui.Field("Сохранённые работы", savedWorks);
+            workField.Margin = new Padding(0, 0, 0, 6);
+            savedWorks.SelectedIndexChanged += delegate { AddSavedWork(); };
+            group.Controls.Add(workField, 0, 0);
+
+            items.AccessibleName = "Позиции счёта";
+            items.Margin = Padding.Empty;
+            items.EditMode = DataGridViewEditMode.EditOnEnter;
+            items.Columns.AddRange(
+                Ui.Column("Наименование", 49, 185, 1200),
+                Ui.Column("Ед. изм.", 10, 84, 20),
+                Ui.Column("Кол-во", 11, 82, 24, true),
+                Ui.Column("Цена за ед., руб.", 15, 125, 24, true),
+                Ui.Column("Сумма, руб.", 15, 120, 24, true));
+            items.Columns[ItemAmount].ReadOnly = true;
+            items.Columns[ItemAmount].DefaultCellStyle.BackColor = Color.FromArgb(239, 243, 249);
+            items.CellValueChanged += delegate(object sender, DataGridViewCellEventArgs e) {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.ColumnIndex >= ItemAmount)
+                    return;
+                RefreshAmounts();
+                if (e.ColumnIndex == ItemName || e.ColumnIndex == ItemUnit || e.ColumnIndex == ItemPrice)
+                    RememberWork(items.Rows[e.RowIndex]);
+            };
+            group.Controls.Add(items, 0, 1);
+
+            var toolbar = new TableLayoutPanel {
+                ColumnCount = 2, RowCount = 1, AutoSize = true, Dock = DockStyle.Top, Margin = new Padding(0, 6, 0, 0)
+            };
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            var caption = Ui.Label("Позиции");
-            caption.Font = Ui.BoldFont;
-            caption.Anchor = AnchorStyles.Left;
-            toolbar.Controls.Add(caption, 0, 0);
             var actions = Ui.Buttons();
             var add = Ui.Button("Добавить строку");
             var remove = Ui.Button("Удалить строку");
-            remove.Margin = Padding.Empty;
             add.Click += delegate { AddItem(true); };
             remove.Click += delegate {
                 if (items.CurrentRow != null)
@@ -216,25 +250,12 @@ namespace InvoiceAndAct
             };
             actions.Controls.Add(add);
             actions.Controls.Add(remove);
-            toolbar.Controls.Add(actions, 1, 0);
-
-            items.AccessibleName = "Позиции счёта";
-            items.Margin = Padding.Empty;
-            items.EditMode = DataGridViewEditMode.EditOnEnter;
-            items.Columns.AddRange(
-                Ui.Column("Наименование", 50, 200, 1200),
-                Ui.Column("Кол-во", 11, 82, 24, true),
-                Ui.Column("Ед. изм.", 10, 84, 20),
-                Ui.Column("Цена, руб.", 14, 105, 24, true),
-                Ui.Column("Сумма, руб.", 15, 120, 24, true));
-            items.Columns[4].ReadOnly = true;
-            items.Columns[4].DefaultCellStyle.BackColor = Color.FromArgb(239, 243, 249);
-            items.CellValueChanged += delegate(object sender, DataGridViewCellEventArgs e) {
-                if (e.RowIndex >= 0 && e.ColumnIndex >= 0 && e.ColumnIndex < 4)
-                    RefreshAmounts();
-            };
-            group.Controls.Add(toolbar, 0, 0);
-            group.Controls.Add(items, 0, 1);
+            toolbar.Controls.Add(actions, 0, 0);
+            var chooseAmount = Ui.Button("Подобрать по сумме…");
+            chooseAmount.Margin = Padding.Empty;
+            chooseAmount.Click += delegate { ChooseAmount(); };
+            toolbar.Controls.Add(chooseAmount, 1, 0);
+            group.Controls.Add(toolbar, 0, 2);
             return group;
         }
 
@@ -342,15 +363,102 @@ namespace InvoiceAndAct
             buyerSignatory.Text = buyer.Signatory ?? "";
         }
 
-        private void AddItem(bool edit)
+        private void RefreshWorkList()
         {
-            int row = items.Rows.Add("", "1", "", "", "");
+            try
+            {
+                works = workCatalog.Read();
+                updatingWorks = true;
+                savedWorks.BeginUpdate();
+                savedWorks.Items.Clear();
+                savedWorks.Items.Add("Выбрать сохранённую работу");
+                foreach (WorkTemplate work in works)
+                    savedWorks.Items.Add(work.Name + "  ·  " + work.Unit);
+                savedWorks.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Не удалось прочитать список работ. " + ex.Message;
+            }
+            finally
+            {
+                savedWorks.EndUpdate();
+                updatingWorks = false;
+            }
+        }
+
+        private void RememberWork(DataGridViewRow row)
+        {
+            try
+            {
+                if (workCatalog.Remember(Cell(row, ItemName), Cell(row, ItemUnit), Cell(row, ItemPrice)))
+                    RefreshWorkList();
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Не удалось сохранить работу. " + ex.Message;
+            }
+        }
+
+        private void AddSavedWork()
+        {
+            if (updatingWorks || savedWorks.SelectedIndex <= 0)
+                return;
+            WorkTemplate work = works[savedWorks.SelectedIndex - 1];
+            savedWorks.SelectedIndex = 0;
+            items.EndEdit();
+            DataGridViewRow row = items.Rows.Cast<DataGridViewRow>().FirstOrDefault(Blank) ?? AddItem(false);
+            row.Cells[ItemName].Value = work.Name;
+            row.Cells[ItemUnit].Value = work.Unit;
+            row.Cells[ItemPrice].Value = work.Price.HasValue ? Money.Format(work.Price.Value) : "";
+            items.CurrentCell = row.Cells[ItemQuantity];
+        }
+
+        private void ChooseAmount()
+        {
+            items.EndEdit();
+            DataGridViewRow selected = items.CurrentRow ?? items.Rows[0];
+            decimal otherTotal;
+            try
+            {
+                otherTotal = items.Rows.Cast<DataGridViewRow>()
+                    .Where(row => row != selected && !Blank(row))
+                    .Sum(row => ReadItem(row).Amount);
+            }
+            catch (ArgumentException ex)
+            {
+                MessageBox.Show(this, "Заполни остальные строки счёта. " + ex.Message, "Подбор суммы",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            decimal? currentTotal = null;
+            try
+            {
+                if (!Blank(selected))
+                    currentTotal = otherTotal + ReadItem(selected).Amount;
+            }
+            catch (ArgumentException) { }
+
+            using (var dialog = new AmountDialog(otherTotal, currentTotal, Cell(selected, ItemUnit)))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                    return;
+                selected.Cells[ItemQuantity].Value = Money.Quantity(dialog.SelectedOption.Quantity);
+                selected.Cells[ItemPrice].Value = Money.Format(dialog.SelectedOption.Price);
+            }
+        }
+
+        private DataGridViewRow AddItem(bool edit)
+        {
+            int row = items.Rows.Add("", "", "1", "", "");
             if (edit)
             {
-                items.CurrentCell = items.Rows[row].Cells[0];
+                items.CurrentCell = items.Rows[row].Cells[ItemName];
                 items.Focus();
                 items.BeginEdit(true);
             }
+            return items.Rows[row];
         }
 
         private static string Cell(DataGridViewRow row, int column)
@@ -360,14 +468,14 @@ namespace InvoiceAndAct
 
         private static bool Blank(DataGridViewRow row)
         {
-            string quantity = Cell(row, 1);
-            return Cell(row, 0).Length == 0 && Cell(row, 2).Length == 0 && Cell(row, 3).Length == 0 &&
+            string quantity = Cell(row, ItemQuantity);
+            return Cell(row, ItemName).Length == 0 && Cell(row, ItemUnit).Length == 0 && Cell(row, ItemPrice).Length == 0 &&
                 (quantity.Length == 0 || quantity == "1");
         }
 
         private static LineItem ReadItem(DataGridViewRow row)
         {
-            return new LineItem(Cell(row, 0), Cell(row, 2), Cell(row, 1), Cell(row, 3), row.Index + 1);
+            return new LineItem(Cell(row, ItemName), Cell(row, ItemUnit), Cell(row, ItemQuantity), Cell(row, ItemPrice), row.Index + 1);
         }
 
         private void RefreshAmounts()
@@ -390,8 +498,8 @@ namespace InvoiceAndAct
                         complete = false;
                     }
                 }
-                if (Cell(row, 4) != amount)
-                    row.Cells[4].Value = amount;
+                if (Cell(row, ItemAmount) != amount)
+                    row.Cells[ItemAmount].Value = amount;
             }
             total.Text = complete ? "К оплате " + Money.Format(sum) + " ₽" : "К оплате —";
         }
@@ -461,7 +569,7 @@ namespace InvoiceAndAct
             try
             {
                 IList<HistoryEntry> entries = history.Read();
-                RefreshBuyerList(HistoryStore.Buyers(entries));
+                RefreshBuyerList(history.Buyers(entries));
                 RefreshRecordList(entries);
                 string next = history.SuggestNumber(entries);
                 if (resetNumber || number.Text.Trim() == suggestedNumber)
