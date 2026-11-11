@@ -20,10 +20,10 @@
 Открой терминал PowerShell в папке проекта. Запусти сценарий сборки.
 
 ```powershell
-.\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\build.ps1
 ```
 
-Сценарий вызывает встроенный в .NET Framework компилятор `csc.exe` и собирает `dist\Счета.exe`. Параметр `-DefaultsFile` добавляет в локальную сборку стартовые реквизиты поставщика и первый номер счёта. Для локальной сборки используй `-DefaultsFile .\local\defaults.json`.
+Политика RemoteSigned действует в процессе сборки. Сценарий вызывает встроенный в .NET Framework компилятор `csc.exe` и собирает `dist\Счета.exe`. Параметр `-DefaultsFile` добавляет в локальную сборку стартовые реквизиты поставщика и первый номер счёта. Для локальной сборки используй `-DefaultsFile .\local\defaults.json`.
 
 - `src/Invoice.cs` проверяет введённые данные и рассчитывает суммы.
 - `src/Documents.cs` размещает поля, позиции и подписи на страницах.
